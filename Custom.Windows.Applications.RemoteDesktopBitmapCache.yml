@@ -1,0 +1,75 @@
+name: Custom.Windows.Applications.RemoteDesktopBitmapCache
+description: |
+  This artifact targets the RDP bitmap cache
+  And absolutely should take cache files
+
+tools:
+ - name: bmcTools
+   url: https://github.com/AustinBollinger-dfir/Velociraptor-bmc/raw/main/bmc-tools.exe
+   expected_hash: 9cec3e48cb4d40f98adf8b876d3b66ae64357f34ce48a00b90ecc96f5d732def
+   serve_locally: true
+ - name: bmpPng
+   url: https://github.com/AustinBollinger-dfir/Velociraptor-bmc/raw/main/bmp-png.exe
+   expected_hash: 2319ea9e4185df0c77ac9346e72c6773f0f75f9883de214235a6250fdc8fbeaf
+   serve_locally: true
+
+parameters:
+   - name: BitmapCachePaths
+     type: csv
+     default: |
+        Glob
+        C:\Users\Administrator\AppData\Local\Microsoft\Terminal Server Client\Cache\*.bin
+     description: Alternative specify multiple globs in a table
+
+sources:
+  - name: Output
+    query: |
+      LET file_search = SELECT OSPath,
+               get(item=Data, field="mft") as Inode,
+               Mode.String AS Mode, Size,
+               Mtime AS MTime,
+               Atime AS ATime,
+               Btime AS BTime,
+               Ctime AS CTime, "" AS Keywords,
+               IsDir, Data
+        FROM glob(globs=BitmapCachePaths.Glob, accessor="auto")
+      
+      LET tmpbmc <= SELECT FullPath
+      FROM Artifact.Generic.Utils.FetchBinary(ToolName="bmcTools")
+      
+      LET tmpbmpPng <= SELECT FullPath
+      FROM Artifact.Generic.Utils.FetchBinary(ToolName="bmpPng")
+
+      LET TempDir <= tempdir(remove_last=TRUE)
+
+      LET targetbin = SELECT OSPath
+      FROM file_search
+      
+      SELECT *
+      FROM execve(argv=[tmpbmc[0].FullPath,"-s", targetbin[0].OSPath, "-d", TempDir, "-b"])
+      
+  - name: CleanBmpTiles
+    query: |
+      LET targets = SELECT * FROM glob(globs=TempDir+"/*bmp")
+        WHERE NOT if(condition=NoDir,
+                then= IsDir,
+                else= FALSE)
+        ORDER BY OSPath DESC -- need to order by path to ensure recursive delete works.
+      
+      LET delete_targets = SELECT *, rm(filename=OSPath) as Removed FROM targets
+
+      SELECT OSPath,Removed,Size,Mtime,Ctime,Btime,IsDir,IsLink
+      FROM if(condition=ReallyDoIt,
+            then= delete_targets,
+            else= { SELECT *, FALSE as Removed FROM targets } )
+      
+      
+  - name: PngConversion
+    query: |
+      SELECT *
+      FROM execve(argv=[tmpbmpPng[0].FullPath],cwd=[TempDir])
+     
+  - name: Uploads
+    query: |
+      SELECT upload(file=FullPath) AS Upload
+      FROM glob(globs="**/*.bin_collage.png", root=TempDir)
