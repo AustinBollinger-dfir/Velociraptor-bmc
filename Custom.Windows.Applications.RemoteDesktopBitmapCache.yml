@@ -1,7 +1,6 @@
 name: Custom.Windows.Applications.RemoteDesktopBitmapCache
 description: |
-  This artifact targets the RDP bitmap cache
-  And absolutely should take cache files
+  This artifact targets the RDP bitmap cache, then uploads a nice png version of collage
 
 tools:
  - name: bmcTools
@@ -48,22 +47,6 @@ sources:
       SELECT *
       FROM execve(argv=[tmpbmc[0].FullPath,"-s", targetbin[0].OSPath, "-d", TempDir, "-b"])
       
-  - name: CleanBmpTiles
-    query: |
-      LET targets = SELECT * FROM glob(globs=TempDir+"/*bmp")
-        WHERE NOT if(condition=NoDir,
-                then= IsDir,
-                else= FALSE)
-        ORDER BY OSPath DESC -- need to order by path to ensure recursive delete works.
-      
-      LET delete_targets = SELECT *, rm(filename=OSPath) as Removed FROM targets
-
-      SELECT OSPath,Removed,Size,Mtime,Ctime,Btime,IsDir,IsLink
-      FROM if(condition=ReallyDoIt,
-            then= delete_targets,
-            else= { SELECT *, FALSE as Removed FROM targets } )
-      
-      
   - name: PngConversion
     query: |
       SELECT *
@@ -72,4 +55,4 @@ sources:
   - name: Uploads
     query: |
       SELECT upload(file=FullPath) AS Upload
-      FROM glob(globs="**/*.bin_collage.png", root=TempDir)
+      FROM glob(globs="converted/*.bin_collage.png", root=TempDir)
